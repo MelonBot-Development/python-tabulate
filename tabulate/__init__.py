@@ -14,7 +14,6 @@ import dataclasses
 from typing import (
     Union,
     List,
-    Optional,
 )
 
 try:
@@ -35,25 +34,25 @@ except ImportError:
 
 
 # minimum extra space in headers
-MIN_PADDING = 2
+MIN_PADDING: int = 2
 
 # Whether or not to preserve leading/trailing whitespace in data.
-PRESERVE_WHITESPACE = False
+PRESERVE_WHITESPACE: bool = False
 
-_DEFAULT_FLOATFMT = "g"
-_DEFAULT_INTFMT = ""
-_DEFAULT_MISSINGVAL = ""
+_DEFAULT_FLOATFMT: str = "g"
+_DEFAULT_INTFMT: str = ""
+_DEFAULT_MISSINGVAL: str = ""
 # default align will be overwritten by "left", "center" or "decimal"
 # depending on the formatter
-_DEFAULT_ALIGN = "default"
+_DEFAULT_ALIGN: str = "default"
 
 
 # if True, enable wide-character (CJK) support
-WIDE_CHARS_MODE = wcwidth is not None
+WIDE_CHARS_MODE: bool = wcwidth is not None
 
 # Constant that can be used as part of passed rows to generate a separating line
 # It is purposely an unprintable character, very unlikely to be used in a table
-SEPARATING_LINE = "\001"
+SEPARATING_LINE: str = "\001"
 
 Line = namedtuple("Line", ["begin", "hline", "sep", "end"])
 
