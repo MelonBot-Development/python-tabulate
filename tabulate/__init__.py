@@ -1053,7 +1053,7 @@ def _choose_width_fn(has_invisible, enable_widechars, is_multiline):
     if has_invisible:
         line_width_fn = _visible_width
     elif enable_widechars:  # optional wide-character support if available
-        line_width_fn = wcwidth.wcswidth # type: ignore
+        line_width_fn = wcwidth.wcswidth  # type: ignore
     else:
         line_width_fn = len
     if is_multiline:
@@ -1093,7 +1093,7 @@ def _align_column_choose_width_fn(has_invisible, enable_widechars, is_multiline)
     if has_invisible:
         line_width_fn = _visible_width
     elif enable_widechars:  # optional wide-character support if available
-        line_width_fn = wcwidth.wcswidth # type: ignore
+        line_width_fn = wcwidth.wcswidth  # type: ignore
     else:
         line_width_fn = len
     if is_multiline:
@@ -1146,7 +1146,13 @@ def _align_column(
             # enable wide-character width corrections
             s_lens = [[len(s) for s in re.split("[\r\n]", ms)] for ms in strings]
             visible_widths = [
-                [maxwidth - (w - l) for w, l in zip(mw if isinstance(mw, list) else [mw], ml if isinstance(ml, list) else [ml])]
+                [
+                    maxwidth - (w - l)
+                    for w, l in zip(
+                        mw if isinstance(mw, list) else [mw],
+                        ml if isinstance(ml, list) else [ml],
+                    )
+                ]
                 for mw, ml in zip(s_widths, s_lens)
             ]
             # wcswidth and _visible_width don't count invisible characters;
@@ -1429,18 +1435,24 @@ def _normalize_tabular_data(tabular_data, headers, showindex="default"):
         ):
             # namedtuple
             if all(isinstance(row, tuple) and hasattr(row, "_fields") for row in rows):
-                headers = list(map(str, rows[0]._fields)) # type: ignore
+                headers = list(map(str, rows[0]._fields))  # type: ignore
             else:
-                raise ValueError("All objects in the rows list must be named tuples with the `_fields`` attribute")
+                raise ValueError(
+                    "All objects in the rows list must be named tuples with the `_fields`` attribute"
+                )
         elif len(rows) > 0 and hasattr(rows[0], "keys") and hasattr(rows[0], "values"):
             # dict-like object
             uniq_keys = set()  # implements hashed lookup
             keys = []  # storage for set
             if headers == "firstrow":
                 firstdict = rows[0] if len(rows) > 0 else {}
-                if type(tabular_data) != dict and not hasattr(tabular_data, 'keys'):
-                    raise TypeError("Expected a dictionary-like object, got a {}".format(type(tabular_data)))
-                keys.extend(firstdict.keys()) # type: ignore
+                if type(tabular_data) != dict and not hasattr(tabular_data, "keys"):
+                    raise TypeError(
+                        "Expected a dictionary-like object, got a {}".format(
+                            type(tabular_data)
+                        )
+                    )
+                keys.extend(firstdict.keys())  # type: ignore
                 uniq_keys.update(keys)
                 rows = rows[1:]
             for row in rows:
@@ -1457,7 +1469,7 @@ def _normalize_tabular_data(tabular_data, headers, showindex="default"):
                 headers = list(map(str, headers))
             elif headers == "firstrow":
                 if len(rows) > 0:
-                    headers = [firstdict.get(k, k) for k in keys] # type: ignore
+                    headers = [firstdict.get(k, k) for k in keys]  # type: ignore
                     headers = list(map(str, headers))
                 else:
                     headers = []
@@ -1554,9 +1566,7 @@ def _wrap_text_to_colwidths(list_of_lists, colwidths, numparses: List[bool] = [T
                 # Cast based on our internal type handling
                 # Any future custom formatting of types (such as datetimes)
                 # may need to be more explicit than just `str` of the object
-                casted_cell = (
-                    str(cell) if _isnumber(cell) else str(cell)
-                )
+                casted_cell = str(cell) if _isnumber(cell) else str(cell)
                 wrapped = [
                     "\n".join(wrapper.wrap(line))
                     for line in casted_cell.splitlines()
@@ -2566,7 +2576,6 @@ class _CustomTextWrap(textwrap.TextWrapper):
         chunks.reverse()
 
         while chunks:
-
             # Start the list of chunks that will make up the current line.
             # cur_len is just the length of all the chunks in cur_line.
             cur_line = []
@@ -2719,7 +2728,7 @@ def _main():
             print(usage)
             sys.exit(0)
     files = [sys.stdin] if not args else args
-    with (sys.stdout if outfile == "-" else open(outfile, "w")) as out:
+    with sys.stdout if outfile == "-" else open(outfile, "w") as out:
         for f in files:
             if f == "-":
                 f = sys.stdin
@@ -2737,7 +2746,7 @@ def _main():
             else:
                 if isinstance(f, io.TextIOBase):
                     fobj = io.StringIO(f.read())
-                    
+
                 elif isinstance(f, (str, bytes)):
                     with open(f) as fobj:
                         _pprint_file(
@@ -2750,7 +2759,7 @@ def _main():
                             file=out,
                             colalign=colalign,
                         )
-                        
+
                 else:
                     raise TypeError(f"Unsupported file type: {type(f)}")
 
