@@ -400,6 +400,14 @@ corresponds to the `pipe` format without alignment colons:
     │ bacon  │     0 │
     ╘════════╧═══════╛
 
+`fancy_dottedline` is the same as the `simple_grid` format.
+
+    >>> print(tabulate([["spam", 41.9999], ["eggs", "451.0"]], tablefmt="fancy_dottedline"))
+    ⋅⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯
+    ⋮ spam ⋮  41.9999 ⋮
+    ⋮ eggs ⋮ 451      ⋮
+    ⋅⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯
+
 `presto` is like tables formatted by Presto cli:
 
 ```pycon
