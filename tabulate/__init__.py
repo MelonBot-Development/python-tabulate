@@ -11,8 +11,14 @@ import math
 import textwrap
 import dataclasses
 
+from typing import (
+    Union,
+    List,
+    Optional,
+)
+
 try:
-    import wcwidth  # optional wide-character (CJK) support
+    import wcwidth  # optional wide-character (CJK) support # type: ignore
 except ImportError:
     wcwidth = None
 
@@ -23,7 +29,7 @@ def _is_file(f):
 
 __all__ = ["tabulate", "tabulate_formats", "simple_separated_format"]
 try:
-    from .version import version as __version__  # noqa: F401
+    from .version import version as __version__  # noqa: F401 # type: ignore
 except ImportError:
     pass  # running __init__.py as a script, AppVeyor pytests
 
@@ -1010,7 +1016,7 @@ def _strip_ansi(s):
     if isinstance(s, str):
         return _ansi_codes.sub(r"\4", s)
     else:  # a bytestring
-        return _ansi_codes_bytes.sub(r"\4", s)
+        return _ansi_codes_bytes.sub(b"\4", s)
 
 
 def _visible_width(s):
@@ -1048,7 +1054,7 @@ def _choose_width_fn(has_invisible, enable_widechars, is_multiline):
     if has_invisible:
         line_width_fn = _visible_width
     elif enable_widechars:  # optional wide-character support if available
-        line_width_fn = wcwidth.wcswidth
+        line_width_fn = wcwidth.wcswidth # type: ignore
     else:
         line_width_fn = len
     if is_multiline:
@@ -1088,7 +1094,7 @@ def _align_column_choose_width_fn(has_invisible, enable_widechars, is_multiline)
     if has_invisible:
         line_width_fn = _visible_width
     elif enable_widechars:  # optional wide-character support if available
-        line_width_fn = wcwidth.wcswidth
+        line_width_fn = wcwidth.wcswidth # type: ignore
     else:
         line_width_fn = len
     if is_multiline:
@@ -1141,7 +1147,7 @@ def _align_column(
             # enable wide-character width corrections
             s_lens = [[len(s) for s in re.split("[\r\n]", ms)] for ms in strings]
             visible_widths = [
-                [maxwidth - (w - l) for w, l in zip(mw, ml)]
+                [maxwidth - (w - l) for w, l in zip(mw if isinstance(mw, list) else [mw], ml if isinstance(ml, list) else [ml])]
                 for mw, ml in zip(s_widths, s_lens)
             ]
             # wcswidth and _visible_width don't count invisible characters;
@@ -1156,7 +1162,13 @@ def _align_column(
         else:
             # enable wide-character width corrections
             s_lens = list(map(len, strings))
-            visible_widths = [maxwidth - (w - l) for w, l in zip(s_widths, s_lens)]
+            # visible_widths = [maxwidth - (w - l) for w, l in zip(s_widths, s_lens)]
+            visible_widths = []
+            for w, l in zip(s_widths, s_lens):
+                if isinstance(w, list):
+                    visible_widths.append(maxwidth - (w[0] - l))
+                else:
+                    visible_widths.append(maxwidth - (w - l))
             # wcswidth and _visible_width don't count invisible characters;
             # padfn doesn't need to apply another correction
             padded_strings = [padfn(w, s) for s, w in zip(strings, visible_widths)]
@@ -1239,7 +1251,10 @@ def _format(val, valtype, floatfmt, intfmt, missingval="", has_invisible=True):
         if is_a_colored_number:
             raw_val = _strip_ansi(val)
             formatted_val = format(float(raw_val), floatfmt)
-            return val.replace(raw_val, formatted_val)
+            if isinstance(val, str):
+                return val.replace(str(raw_val), formatted_val)
+            else:
+                return val.decode().replace(str(raw_val), formatted_val)
         else:
             return format(float(val), floatfmt)
     else:
@@ -1252,9 +1267,14 @@ def _align_header(
     "Pad string header to width chars given known visible_width of the header."
     if is_multiline:
         header_lines = re.split(_multiline_codes, header)
-        padded_lines = [
-            _align_header(h, alignment, width, width_fn(h)) for h in header_lines
-        ]
+        if width_fn and callable(width_fn):
+            padded_lines = [
+                _align_header(h, alignment, width, width_fn(h)) for h in header_lines
+            ]
+        else:
+            padded_lines = [
+                _align_header(h, alignment, width, len(h)) for h in header_lines
+            ]
         return "\n".join(padded_lines)
     # else: not multiline
     ninvisible = len(header) - visible_width
@@ -1298,6 +1318,8 @@ def _prepend_row_index(rows, index):
             "index must be as long as the number of data rows: "
             + "len(index)={} len(rows)={}".format(len(index), len(rows))
         )
+    if not isinstance(index, Iterable):
+        raise ValueError("Index must be iterable")
     sans_rows, separating_lines = _remove_separating_lines(rows)
     new_rows = []
     index_iter = iter(index)
@@ -1407,14 +1429,19 @@ def _normalize_tabular_data(tabular_data, headers, showindex="default"):
             and hasattr(rows[0], "_fields")
         ):
             # namedtuple
-            headers = list(map(str, rows[0]._fields))
+            if all(isinstance(row, tuple) and hasattr(row, "_fields") for row in rows):
+                headers = list(map(str, rows[0]._fields)) # type: ignore
+            else:
+                raise ValueError("All objects in the rows list must be named tuples with the `_fields`` attribute")
         elif len(rows) > 0 and hasattr(rows[0], "keys") and hasattr(rows[0], "values"):
             # dict-like object
             uniq_keys = set()  # implements hashed lookup
             keys = []  # storage for set
             if headers == "firstrow":
                 firstdict = rows[0] if len(rows) > 0 else {}
-                keys.extend(firstdict.keys())
+                if type(tabular_data) != dict and not hasattr(tabular_data, 'keys'):
+                    raise TypeError("Expected a dictionary-like object, got a {}".format(type(tabular_data)))
+                keys.extend(firstdict.keys()) # type: ignore
                 uniq_keys.update(keys)
                 rows = rows[1:]
             for row in rows:
@@ -1431,7 +1458,7 @@ def _normalize_tabular_data(tabular_data, headers, showindex="default"):
                 headers = list(map(str, headers))
             elif headers == "firstrow":
                 if len(rows) > 0:
-                    headers = [firstdict.get(k, k) for k in keys]
+                    headers = [firstdict.get(k, k) for k in keys] # type: ignore
                     headers = list(map(str, headers))
                 else:
                     headers = []
@@ -1507,7 +1534,7 @@ def _normalize_tabular_data(tabular_data, headers, showindex="default"):
     return rows, headers
 
 
-def _wrap_text_to_colwidths(list_of_lists, colwidths, numparses=True):
+def _wrap_text_to_colwidths(list_of_lists, colwidths, numparses: List[bool] = [True]):
     if len(list_of_lists):
         num_cols = len(list_of_lists[0])
     else:
@@ -1529,7 +1556,7 @@ def _wrap_text_to_colwidths(list_of_lists, colwidths, numparses=True):
                 # Any future custom formatting of types (such as datetimes)
                 # may need to be more explicit than just `str` of the object
                 casted_cell = (
-                    str(cell) if _isnumber(cell) else _type(cell, numparse)(cell)
+                    str(cell) if _isnumber(cell) else str(cell)
                 )
                 wrapped = [
                     "\n".join(wrapper.wrap(line))
@@ -2240,7 +2267,7 @@ def _expand_numparse(disable_numparse, column_count):
         return [not disable_numparse] * column_count
 
 
-def _expand_iterable(original, num_desired, default):
+def _expand_iterable(original: Union[Iterable, object], num_desired: int, default):
     """
     Expands the `original` argument to return a return a list of
     length `num_desired`. If `original` is shorter than `num_desired`, it will
@@ -2248,7 +2275,10 @@ def _expand_iterable(original, num_desired, default):
     If `original` is not a list to begin with (i.e. scalar value) a list of
     length `num_desired` completely populated with `default will be returned
     """
-    if isinstance(original, Iterable) and not isinstance(original, str):
+    if isinstance(original, str):
+        return [default] * num_desired
+    if isinstance(original, Iterable) and hasattr(original, "__len__"):
+        original = list(original)
         return original + [default] * (num_desired - len(original))
     else:
         return [default] * num_desired
@@ -2649,7 +2679,7 @@ def _main():
     import sys
     import textwrap
 
-    usage = textwrap.dedent(_main.__doc__)
+    usage: str = textwrap.dedent(_main.__doc__) if _main.__doc__ else ""
     try:
         opts, args = getopt.getopt(
             sys.argv[1:],
@@ -2706,17 +2736,24 @@ def _main():
                     colalign=colalign,
                 )
             else:
-                with open(f) as fobj:
-                    _pprint_file(
-                        fobj,
-                        headers=headers,
-                        tablefmt=tablefmt,
-                        sep=sep,
-                        floatfmt=floatfmt,
-                        intfmt=intfmt,
-                        file=out,
-                        colalign=colalign,
-                    )
+                if isinstance(f, io.TextIOBase):
+                    fobj = io.StringIO(f.read())
+                    
+                elif isinstance(f, (str, bytes)):
+                    with open(f) as fobj:
+                        _pprint_file(
+                            fobj,
+                            headers=headers,
+                            tablefmt=tablefmt,
+                            sep=sep,
+                            floatfmt=floatfmt,
+                            intfmt=intfmt,
+                            file=out,
+                            colalign=colalign,
+                        )
+                        
+                else:
+                    raise TypeError(f"Unsupported file type: {type(f)}")
 
 
 def _pprint_file(fobject, headers, tablefmt, sep, floatfmt, intfmt, file, colalign):
