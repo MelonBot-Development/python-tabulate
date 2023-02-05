@@ -605,6 +605,16 @@ _table_formats: Dict[str, TableFormat] = {
         padding=1,
         with_header_hide=None,
     ),
+    "fancy_dottedline": TableFormat(
+        lineabove=Line("⋅", "⋯", "⋯", "⋅"),
+        linebelowheader=Line("⋮", "⋯", "⋯", "⋮"),
+        linebetweenrows=None,
+        linebelow=Line("⋅", "⋯", "⋯", "⋅"),
+        headerrow=DataRow("⋮", "⋮", "⋮"),
+        datarow=DataRow("⋮", "⋮", "⋮"),
+        padding=1,
+        with_header_hide=None,
+    ),
     "github": TableFormat(
         lineabove=Line("|", "-", "|", "|"),
         linebelowheader=Line("|", "-", "|", "|"),
