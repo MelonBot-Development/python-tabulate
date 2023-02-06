@@ -11,8 +11,24 @@ import math
 import textwrap
 import dataclasses
 
+from typing import (
+    Callable,
+    Tuple,
+    Union,
+    TypeVar,
+    List,
+    Dict,
+    Pattern,
+    Type,
+    Any,
+    Optional,
+    Sized,
+    Iterable,
+)
+from typing_extensions import Literal, TypedDict, Protocol
+
 try:
-    import wcwidth  # optional wide-character (CJK) support
+    import wcwidth  # optional wide-character (CJK) support # type: ignore
 except ImportError:
     wcwidth = None
 
@@ -22,38 +38,77 @@ def _is_file(f):
 
 
 __all__ = ["tabulate", "tabulate_formats", "simple_separated_format"]
+
 try:
-    from .version import version as __version__  # noqa: F401
+    from .version import version as __version__  # noqa: F401 # type: ignore
 except ImportError:
     pass  # running __init__.py as a script, AppVeyor pytests
 
-
 # minimum extra space in headers
-MIN_PADDING = 2
+MIN_PADDING: int = 2
 
 # Whether or not to preserve leading/trailing whitespace in data.
-PRESERVE_WHITESPACE = False
+PRESERVE_WHITESPACE: bool = False
 
-_DEFAULT_FLOATFMT = "g"
-_DEFAULT_INTFMT = ""
-_DEFAULT_MISSINGVAL = ""
+# TextWrapper breaks words longer than 'width'.
+_BREAK_LONG_WORDS: bool = True
+# TextWrapper is breaking hyphenated words.
+_BREAK_ON_HYPHENS: bool = True
+
+_DEFAULT_FLOATFMT: str = "g"
+_DEFAULT_INTFMT: str = ""
+_DEFAULT_MISSINGVAL: str = ""
 # default align will be overwritten by "left", "center" or "decimal"
 # depending on the formatter
-_DEFAULT_ALIGN = "default"
-
+_DEFAULT_ALIGN: str = "default"
 
 # if True, enable wide-character (CJK) support
-WIDE_CHARS_MODE = wcwidth is not None
+WIDE_CHARS_MODE: bool = wcwidth is not None
 
 # Constant that can be used as part of passed rows to generate a separating line
 # It is purposely an unprintable character, very unlikely to be used in a table
-SEPARATING_LINE = "\001"
+SEPARATING_LINE: str = "\001"
 
-Line = namedtuple("Line", ["begin", "hline", "sep", "end"])
+T_ALIGNS = List[str]
+T_COLWIDTHS = List[Union[int, str]]
 
+AST = TypeVar("AST", bound="AlignableString")
+
+ALIGNMENT = TypedDict(
+    "ALIGNMENT",
+    {
+        "left": str,
+        "right": str,
+        "center": str,
+        "decimal": str,
+    },
+)
+
+ColWidths = TypedDict(
+    "ColWidths",
+    {
+        "colwidth": int,
+    },
+)
+
+ColAligns = TypedDict(
+    "ColAlign",
+    {
+        "colalign": str,
+    },
+)
+
+Line = namedtuple(
+    "Line",
+    [
+        "begin",
+        "hline",
+        "sep",
+        "end",
+    ],
+)
 
 DataRow = namedtuple("DataRow", ["begin", "sep", "end"])
-
 
 # A table structure is supposed to be:
 #
@@ -101,16 +156,53 @@ TableFormat = namedtuple(
 )
 
 
-def _is_separating_line(row):
+class TableOptions(TypedDict):
+    colwidths_ignore: T_COLWIDTHS
+    colaligns_ignore: T_ALIGNS
+
+
+class EscapeString(Protocol):
+    def __str__(self) -> str:
+        ...
+
+
+class Convertible(Protocol):
+    def __call__(self, string: Union[str, bytes]) -> Any:
+        ...
+
+
+class AlignableString(Protocol):
+    def __str__(self) -> str:
+        ...
+
+
+class IndexType(Protocol):
+    def __len__(self) -> int:
+        ...
+
+    def __iter__(self) -> Iterable:
+        ...
+
+
+class HasLen(Protocol):
+    def __len__(self) -> int:
+        ...
+
+
+def _is_separating_line_values(value: str) -> bool:
+    return type(value) == str and value.strip() == SEPARATING_LINE
+
+
+def _is_separating_line(row: Union[list, str]) -> Literal[True, False]:
     row_type = type(row)
     is_sl = (row_type == list or row_type == str) and (
-        (len(row) >= 1 and row[0] == SEPARATING_LINE)
-        or (len(row) >= 2 and row[1] == SEPARATING_LINE)
+        (len(row) >= 1 and _is_separating_line_values(row[0]))
+        or (len(row) >= 2 and _is_separating_line_values(row[1]))
     )
     return is_sl
 
 
-def _pipe_segment_with_colons(align, colwidth):
+def _pipe_segment_with_colons(align: str, colwidth: int) -> str:
     """Return a segment of a horizontal line with optional colons which
     indicate column's alignment (as in `pipe` output format)."""
     w = colwidth
@@ -124,7 +216,7 @@ def _pipe_segment_with_colons(align, colwidth):
         return "-" * w
 
 
-def _pipe_line_with_colons(colwidths, colaligns):
+def _pipe_line_with_colons(colwidths: List[int], colaligns: List[str]) -> str:
     """Return a horizontal line with optional colons to indicate column's
     alignment (as in `pipe` output format)."""
     if not colaligns:  # e.g. printing an empty data frame (github issue #15)
@@ -133,8 +225,13 @@ def _pipe_line_with_colons(colwidths, colaligns):
     return "|" + "|".join(segments) + "|"
 
 
-def _mediawiki_row_with_attrs(separator, cell_values, colwidths, colaligns):
-    alignment = {
+def _mediawiki_row_with_attrs(
+    separator: str,
+    cell_values: List[str],
+    colwidths: List[int],
+    colaligns: List[Literal["left", "right", "center", "decimal"]],
+) -> str:
+    alignment: ALIGNMENT = {
         "left": "",
         "right": 'style="text-align: right;"| ',
         "center": 'style="text-align: center;"| ',
@@ -149,20 +246,42 @@ def _mediawiki_row_with_attrs(separator, cell_values, colwidths, colaligns):
     return (separator + colsep.join(values_with_attrs)).rstrip()
 
 
-def _textile_row_with_attrs(cell_values, colwidths, colaligns):
+def _textile_row_with_attrs(
+    cell_values: List[str],
+    colwidths: List[int],
+    colaligns: List[
+        Union[
+            Literal["left"],
+            Literal["right"],
+            Literal["center"],
+            Literal["decimal"],
+        ]
+    ],
+) -> str:
     cell_values[0] += " "
-    alignment = {"left": "<.", "right": ">.", "center": "=.", "decimal": ">."}
+    alignment: ALIGNMENT = {
+        "left": "<.",
+        "right": ">.",
+        "center": "=.",
+        "decimal": ">.",
+    }
     values = (alignment.get(a, "") + v for a, v in zip(colaligns, cell_values))
     return "|" + "|".join(values) + "|"
 
 
-def _html_begin_table_without_header(colwidths_ignore, colaligns_ignore):
+def _html_begin_table_without_header(options: TableOptions) -> str:
     # this table header will be suppressed if there is a header row
     return "<table>\n<tbody>"
 
 
-def _html_row_with_attrs(celltag, unsafe, cell_values, colwidths, colaligns):
-    alignment = {
+def _html_row_with_attrs(
+    celltag: str,
+    unsafe: bool,
+    cell_values: List[str],
+    colwidths: List[int],
+    colaligns: List[str],
+) -> str:
+    alignment: ALIGNMENT = {
         "left": "",
         "right": ' style="text-align: right;"',
         "center": ' style="text-align: center;"',
@@ -184,8 +303,14 @@ def _html_row_with_attrs(celltag, unsafe, cell_values, colwidths, colaligns):
     return rowhtml
 
 
-def _moin_row_with_attrs(celltag, cell_values, colwidths, colaligns, header=""):
-    alignment = {
+def _moin_row_with_attrs(
+    celltag: str,
+    cell_values: List[str],
+    colwidths: List[int],
+    colaligns: List[Literal["left", "right", "center", "decimal"]],
+    header: str = "",
+) -> str:
+    alignment: ALIGNMENT = {
         "left": "",
         "right": '<style="text-align: right;">',
         "center": '<style="text-align: center;">',
@@ -198,7 +323,12 @@ def _moin_row_with_attrs(celltag, cell_values, colwidths, colaligns, header=""):
     return "".join(values_with_attrs) + "||"
 
 
-def _latex_line_begin_tabular(colwidths, colaligns, booktabs=False, longtable=False):
+def _latex_line_begin_tabular(
+    colwidths: List[int],
+    colaligns: List[Literal["left", "right", "center", "decimal"]],
+    booktabs: bool = False,
+    longtable: bool = False,
+) -> str:
     alignment = {"left": "l", "right": "r", "center": "c", "decimal": "r"}
     tabular_columns_fmt = "".join([alignment.get(a, "l") for a in colaligns])
     return "\n".join(
@@ -211,13 +341,18 @@ def _latex_line_begin_tabular(colwidths, colaligns, booktabs=False, longtable=Fa
     )
 
 
-def _asciidoc_row(is_header, *args):
+def _asciidoc_row(is_header: bool, *args: Any):
     """handle header and data rows for asciidoc format"""
 
-    def make_header_line(is_header, colwidths, colaligns):
+    def make_header_line(is_header: bool, colwidths: List[int], colaligns: List[str]):
         # generate the column specifiers
 
-        alignment = {"left": "<", "right": ">", "center": "^", "decimal": ">"}
+        alignment: Dict[str, str] = {
+            "left": "<",
+            "right": ">",
+            "center": "^",
+            "decimal": ">",
+        }
         # use the column widths generated by tabulate for the asciidoc column width specifiers
         asciidoc_alignments = zip(
             colwidths, [alignment[colalign] for colalign in colaligns]
@@ -264,7 +399,7 @@ def _asciidoc_row(is_header, *args):
         )
 
 
-LATEX_ESCAPE_RULES = {
+LATEX_ESCAPE_RULES: Dict[str, str] = {
     r"&": r"\&",
     r"%": r"\%",
     r"$": r"\$",
@@ -280,7 +415,12 @@ LATEX_ESCAPE_RULES = {
 }
 
 
-def _latex_row(cell_values, colwidths, colaligns, escrules=LATEX_ESCAPE_RULES):
+def _latex_row(
+    cell_values: List[str],
+    colwidths: List[int],
+    colaligns: List[Literal["left", "center", "right"]],
+    escrules: Dict[str, str] = LATEX_ESCAPE_RULES,
+):
     def escape_char(c):
         return escrules.get(c, c)
 
@@ -289,8 +429,13 @@ def _latex_row(cell_values, colwidths, colaligns, escrules=LATEX_ESCAPE_RULES):
     return _build_simple_row(escaped_values, rowfmt)
 
 
-def _rst_escape_first_column(rows, headers):
-    def escape_empty(val):
+def _rst_escape_first_column(
+    rows: Union[List[List[Union[str, bytes]]], Any],
+    headers: List[Union[str, bytes]],
+) -> Tuple[
+    List[List[Union[str, bytes, Literal[".."]]]], List[Union[str, bytes, Literal[".."]]]
+]:
+    def escape_empty(val: Union[str, bytes]) -> Union[str, bytes, Literal[".."]]:
         if isinstance(val, (str, bytes)) and not val.strip():
             return ".."
         else:
@@ -308,7 +453,7 @@ def _rst_escape_first_column(rows, headers):
     return new_rows, new_headers
 
 
-_table_formats = {
+_table_formats: Dict[str, TableFormat] = {
     "simple": TableFormat(
         lineabove=Line("", "-", "  ", ""),
         linebelowheader=Line("", "-", "  ", ""),
@@ -466,6 +611,16 @@ _table_formats = {
         linebelow=Line("╘", "═", "╧", "╛"),
         headerrow=DataRow("│", "│", "│"),
         datarow=DataRow("│", "│", "│"),
+        padding=1,
+        with_header_hide=None,
+    ),
+    "fancy_dottedline": TableFormat(
+        lineabove=Line("⋅", "⋯", "⋯", "⋅"),
+        linebelowheader=Line("⋮", "⋯", "⋯", "⋮"),
+        linebetweenrows=None,
+        linebelow=Line("⋅", "⋯", "⋯", "⋅"),
+        headerrow=DataRow("⋮", "⋮", "⋮"),
+        datarow=DataRow("⋮", "⋮", "⋮"),
         padding=1,
         with_header_hide=None,
     ),
@@ -676,13 +831,12 @@ _table_formats = {
     ),
 }
 
-
-tabulate_formats = list(sorted(_table_formats.keys()))
+tabulate_formats: List[str] = list(sorted(_table_formats.keys()))
 
 # The table formats for which multiline cells will be folded into subsequent
 # table rows. The key is the original format specified at the API. The value is
 # the format that will be used to represent the original format.
-multiline_formats = {
+multiline_formats: Dict[str, str] = {
     "plain": "plain",
     "simple": "simple",
     "grid": "grid",
@@ -718,8 +872,8 @@ multiline_formats = {
 #       - tsv: TBD
 #       - textile: Replace \n with <br/> (must be well-formed XML)
 
-_multiline_codes = re.compile(r"\r|\n|\r\n")
-_multiline_codes_bytes = re.compile(b"\r|\n|\r\n")
+_multiline_codes: Pattern[str] = re.compile(r"\r|\n|\r\n")
+_multiline_codes_bytes: Pattern[bytes] = re.compile(b"\r|\n|\r\n")
 
 # Handle ANSI escape sequences for both control sequence introducer (CSI) and
 # operating system command (OSC). Both of these begin with 0x1b (or octal 033),
@@ -744,12 +898,12 @@ _multiline_codes_bytes = re.compile(b"\r|\n|\r\n")
 # params: 0..n optional key value pairs separated by ':' (e.g. foo=bar:baz=qux:abc=123)
 # URI: the actual URI with protocol scheme (e.g. https://, file://, ftp://)
 # ST: ESC followed by the '\' character (0x5c)
-_esc = r"\x1b"
-_csi = rf"{_esc}\["
-_osc = rf"{_esc}\]"
-_st = rf"{_esc}\\"
+_esc: str = r"\x1b"
+_csi: str = rf"{_esc}\["
+_osc: str = rf"{_esc}\]"
+_st: str = rf"{_esc}\\"
 
-_ansi_escape_pat = rf"""
+_ansi_escape_pat: str = rf"""
     (
         # terminal colors, etc
         {_csi}        # CSI
@@ -767,16 +921,18 @@ _ansi_escape_pat = rf"""
         {_osc}8;;{_st}  # "closing" OSC sequence
     )
 """
-_ansi_codes = re.compile(_ansi_escape_pat, re.VERBOSE)
-_ansi_codes_bytes = re.compile(_ansi_escape_pat.encode("utf8"), re.VERBOSE)
-_ansi_color_reset_code = "\033[0m"
+_ansi_codes: Pattern[str] = re.compile(_ansi_escape_pat, re.VERBOSE)
+_ansi_codes_bytes: Pattern[bytes] = re.compile(
+    _ansi_escape_pat.encode("utf8"), re.VERBOSE
+)
+_ansi_color_reset_code: str = "\033[0m"
 
-_float_with_thousands_separators = re.compile(
+_float_with_thousands_separators: Pattern[str] = re.compile(
     r"^(([+-]?[0-9]{1,3})(?:,([0-9]{3}))*)?(?(1)\.[0-9]*|\.[0-9]+)?$"
 )
 
 
-def simple_separated_format(separator):
+def simple_separated_format(separator: str):
     """Construct a simple TableFormat with columns separated by a separator.
 
     >>> tsv = simple_separated_format("\\t") ; \
@@ -829,7 +985,7 @@ def _isnumber_with_thousands_separator(string):
     return bool(re.match(_float_with_thousands_separators, string))
 
 
-def _isconvertible(conv, string):
+def _isconvertible(conv: type, string: Any) -> bool:
     try:
         conv(string)
         return True
@@ -837,7 +993,7 @@ def _isconvertible(conv, string):
         return False
 
 
-def _isnumber(string):
+def _isnumber(string: Any) -> bool:
     """
     >>> _isnumber("123.45")
     True
@@ -859,7 +1015,7 @@ def _isnumber(string):
     return True
 
 
-def _isint(string, inttype=int):
+def _isint(string: Any, inttype: Type[int] = int) -> bool:
     """
     >>> _isint("123")
     True
@@ -878,7 +1034,7 @@ def _isint(string, inttype=int):
     )
 
 
-def _isbool(string):
+def _isbool(string: Any) -> bool:
     """
     >>> _isbool(True)
     True
@@ -892,7 +1048,7 @@ def _isbool(string):
     )
 
 
-def _type(string, has_invisible=True, numparse=True):
+def _type(string: Any, has_invisible: bool = True, numparse: bool = True) -> Any:
     """The least generic type (type(None), int, float, str, unicode).
 
     >>> _type(None) is type(None)
@@ -927,7 +1083,7 @@ def _type(string, has_invisible=True, numparse=True):
         return str
 
 
-def _afterpoint(string):
+def _afterpoint(string: Any) -> Union[int, Literal[-1]]:
     """Symbols after a decimal point, -1 if the string lacks the decimal point.
 
     >>> _afterpoint("123.45")
@@ -956,7 +1112,7 @@ def _afterpoint(string):
         return -1  # not a number
 
 
-def _padleft(width, s):
+def _padleft(width: int, s: Any):
     """Flush right.
 
     >>> _padleft(6, '\u044f\u0439\u0446\u0430') == '  \u044f\u0439\u0446\u0430'
@@ -967,7 +1123,7 @@ def _padleft(width, s):
     return fmt.format(s)
 
 
-def _padright(width, s):
+def _padright(width: int, s: Any):
     """Flush left.
 
     >>> _padright(6, '\u044f\u0439\u0446\u0430') == '\u044f\u0439\u0446\u0430  '
@@ -978,7 +1134,7 @@ def _padright(width, s):
     return fmt.format(s)
 
 
-def _padboth(width, s):
+def _padboth(width: int, s: Any):
     """Center string.
 
     >>> _padboth(6, '\u044f\u0439\u0446\u0430') == ' \u044f\u0439\u0446\u0430 '
@@ -989,11 +1145,11 @@ def _padboth(width, s):
     return fmt.format(s)
 
 
-def _padnone(ignore_width, s):
+def _padnone(ignore_width: int, s: Any):
     return s
 
 
-def _strip_ansi(s):
+def _strip_ansi(s: Union[str, bytes]) -> Union[str, bytes]:
     r"""Remove ANSI escape sequences, both CSI (color codes, etc) and OSC hyperlinks.
 
     CSI sequences are simply removed from the output, while OSC hyperlinks are replaced
@@ -1010,10 +1166,10 @@ def _strip_ansi(s):
     if isinstance(s, str):
         return _ansi_codes.sub(r"\4", s)
     else:  # a bytestring
-        return _ansi_codes_bytes.sub(r"\4", s)
+        return _ansi_codes_bytes.sub(b"\4", s)
 
 
-def _visible_width(s):
+def _visible_width(s: Any) -> int:
     """Visible width of a printed string. ANSI color codes are removed.
 
     >>> _visible_width('\x1b[31mhello\x1b[0m'), _visible_width("world")
@@ -1031,24 +1187,26 @@ def _visible_width(s):
         return len_fn(str(s))
 
 
-def _is_multiline(s):
+def _is_multiline(s: Union[str, bytes]) -> bool:
     if isinstance(s, str):
         return bool(re.search(_multiline_codes, s))
     else:  # a bytestring
         return bool(re.search(_multiline_codes_bytes, s))
 
 
-def _multiline_width(multiline_s, line_width_fn=len):
+def _multiline_width(
+    multiline_s: str, line_width_fn: Callable[[str], int] = len
+) -> int:
     """Visible width of a potentially multiline content."""
     return max(map(line_width_fn, re.split("[\r\n]", multiline_s)))
 
 
-def _choose_width_fn(has_invisible, enable_widechars, is_multiline):
+def _choose_width_fn(has_invisible: bool, enable_widechars: bool, is_multiline: bool):
     """Return a function to calculate visible cell width."""
     if has_invisible:
         line_width_fn = _visible_width
     elif enable_widechars:  # optional wide-character support if available
-        line_width_fn = wcwidth.wcswidth
+        line_width_fn = wcwidth.wcswidth  # type: ignore
     else:
         line_width_fn = len
     if is_multiline:
@@ -1058,7 +1216,9 @@ def _choose_width_fn(has_invisible, enable_widechars, is_multiline):
     return width_fn
 
 
-def _align_column_choose_padfn(strings, alignment, has_invisible):
+def _align_column_choose_padfn(
+    strings: List[str], alignment: str, has_invisible: bool
+) -> Tuple[List[str], Callable]:
     if alignment == "right":
         if not PRESERVE_WHITESPACE:
             strings = [s.strip() for s in strings]
@@ -1084,11 +1244,13 @@ def _align_column_choose_padfn(strings, alignment, has_invisible):
     return strings, padfn
 
 
-def _align_column_choose_width_fn(has_invisible, enable_widechars, is_multiline):
+def _align_column_choose_width_fn(
+    has_invisible: bool, enable_widechars: bool, is_multiline: bool
+):
     if has_invisible:
         line_width_fn = _visible_width
     elif enable_widechars:  # optional wide-character support if available
-        line_width_fn = wcwidth.wcswidth
+        line_width_fn = wcwidth.wcswidth  # type: ignore
     else:
         line_width_fn = len
     if is_multiline:
@@ -1098,12 +1260,14 @@ def _align_column_choose_width_fn(has_invisible, enable_widechars, is_multiline)
     return width_fn
 
 
-def _align_column_multiline_width(multiline_s, line_width_fn=len):
+def _align_column_multiline_width(
+    multiline_s: str, line_width_fn: Callable[[str], int] = len
+) -> List[int]:
     """Visible width of a potentially multiline content."""
     return list(map(line_width_fn, re.split("[\r\n]", multiline_s)))
 
 
-def _flat_list(nested_list):
+def _flat_list(nested_list: List[Union[List[int], int]]) -> List[int]:
     ret = []
     for item in nested_list:
         if isinstance(item, list):
@@ -1115,15 +1279,15 @@ def _flat_list(nested_list):
 
 
 def _align_column(
-    strings,
-    alignment,
-    minwidth=0,
-    has_invisible=True,
-    enable_widechars=False,
-    is_multiline=False,
+    strings: List[Union[AST, Any]],
+    alignment: str,
+    minwidth: int = 0,
+    has_invisible: bool = True,
+    enable_widechars: bool = False,
+    is_multiline: bool = False,
 ):
     """[string] -> [padded_string]"""
-    strings, padfn = _align_column_choose_padfn(strings, alignment, has_invisible)
+    strings, padfn = _align_column_choose_padfn(strings, alignment, has_invisible)  # type: ignore
     width_fn = _align_column_choose_width_fn(
         has_invisible, enable_widechars, is_multiline
     )
@@ -1141,7 +1305,13 @@ def _align_column(
             # enable wide-character width corrections
             s_lens = [[len(s) for s in re.split("[\r\n]", ms)] for ms in strings]
             visible_widths = [
-                [maxwidth - (w - l) for w, l in zip(mw, ml)]
+                [
+                    maxwidth - (w - l)
+                    for w, l in zip(
+                        mw if isinstance(mw, list) else [mw],
+                        ml if isinstance(ml, list) else [ml],
+                    )
+                ]
                 for mw, ml in zip(s_widths, s_lens)
             ]
             # wcswidth and _visible_width don't count invisible characters;
@@ -1156,15 +1326,21 @@ def _align_column(
         else:
             # enable wide-character width corrections
             s_lens = list(map(len, strings))
-            visible_widths = [maxwidth - (w - l) for w, l in zip(s_widths, s_lens)]
+            # visible_widths = [maxwidth - (w - l) for w, l in zip(s_widths, s_lens)]
+            visible_widths = []
+            for w, l in zip(s_widths, s_lens):
+                if isinstance(w, list):
+                    visible_widths.append(maxwidth - (w[0] - l))
+                else:
+                    visible_widths.append(maxwidth - (w - l))
             # wcswidth and _visible_width don't count invisible characters;
             # padfn doesn't need to apply another correction
             padded_strings = [padfn(w, s) for s, w in zip(strings, visible_widths)]
     return padded_strings
 
 
-def _more_generic(type1, type2):
-    types = {
+def _more_generic(type1: Type, type2: Type) -> Type:
+    types: Dict[type, int] = {
         type(None): 0,
         bool: 1,
         int: 2,
@@ -1172,7 +1348,7 @@ def _more_generic(type1, type2):
         bytes: 4,
         str: 5,
     }
-    invtypes = {
+    invtypes: Dict[int, type] = {
         5: str,
         4: bytes,
         3: float,
@@ -1184,7 +1360,9 @@ def _more_generic(type1, type2):
     return invtypes[moregeneric]
 
 
-def _column_type(strings, has_invisible=True, numparse=True):
+def _column_type(
+    strings: Any, has_invisible: bool = True, numparse: bool = True
+) -> Type:
     """The least generic type all column values are convertible to.
 
     >>> _column_type([True, False]) is bool
@@ -1210,17 +1388,15 @@ def _column_type(strings, has_invisible=True, numparse=True):
     return reduce(_more_generic, types, bool)
 
 
-def _format(val, valtype, floatfmt, intfmt, missingval="", has_invisible=True):
-    """Format a value according to its type.
-
-    Unicode is supported:
-
-    >>> hrow = ['\u0431\u0443\u043a\u0432\u0430', '\u0446\u0438\u0444\u0440\u0430'] ; \
-        tbl = [['\u0430\u0437', 2], ['\u0431\u0443\u043a\u0438', 4]] ; \
-        good_result = '\\u0431\\u0443\\u043a\\u0432\\u0430      \\u0446\\u0438\\u0444\\u0440\\u0430\\n-------  -------\\n\\u0430\\u0437             2\\n\\u0431\\u0443\\u043a\\u0438           4' ; \
-        tabulate(tbl, headers=hrow) == good_result
-    True
-
+def _format(
+    val: Any,
+    valtype: type,
+    floatfmt: str,
+    intfmt: str,
+    missingval: str = "",
+    has_invisible: bool = True,
+) -> str:
+    """Format a value according to the type of the column.
     """  # noqa
     if val is None:
         return missingval
@@ -1234,27 +1410,53 @@ def _format(val, valtype, floatfmt, intfmt, missingval="", has_invisible=True):
             return str(val, "ascii")
         except (TypeError, UnicodeDecodeError):
             return str(val)
+        
+    # the rest is for bool and number values in bool and number column types
+    is_ansi_colored = has_invisible and isinstance(val, (str, bytes))
+    # strip color if needed, reapply before return
+    if is_ansi_colored:
+        colored_val = val
+        val = raw_val = _strip_ansi(val)
+    
+    if _isbool(val):
+        val = val in (True, "True")
+        
+    if valtype is int:
+        if intfmt:
+            val = int(val)
+        val = format(val, intfmt)
+        
     elif valtype is float:
-        is_a_colored_number = has_invisible and isinstance(val, (str, bytes))
-        if is_a_colored_number:
-            raw_val = _strip_ansi(val)
-            formatted_val = format(float(raw_val), floatfmt)
-            return val.replace(raw_val, formatted_val)
-        else:
-            return format(float(val), floatfmt)
+        val = format(float(val), floatfmt)
+        
     else:
-        return f"{val}"
+        val = f"{val}"
+        
+    if is_ansi_colored:
+        val = colored_val.replace(raw_val, val) # type: ignore
+        
+    return val
 
 
 def _align_header(
-    header, alignment, width, visible_width, is_multiline=False, width_fn=None
-):
+    header: Any,
+    alignment: Any,
+    width: int,
+    visible_width: int,
+    is_multiline: Optional[bool] = False,
+    width_fn: Optional[Callable[[str], int]] = None,
+) -> str:
     "Pad string header to width chars given known visible_width of the header."
     if is_multiline:
         header_lines = re.split(_multiline_codes, header)
-        padded_lines = [
-            _align_header(h, alignment, width, width_fn(h)) for h in header_lines
-        ]
+        if width_fn and callable(width_fn):
+            padded_lines = [
+                _align_header(h, alignment, width, width_fn(h)) for h in header_lines
+            ]
+        else:
+            padded_lines = [
+                _align_header(h, alignment, width, len(h)) for h in header_lines
+            ]
         return "\n".join(padded_lines)
     # else: not multiline
     ninvisible = len(header) - visible_width
@@ -1269,7 +1471,7 @@ def _align_header(
         return _padleft(width, header)
 
 
-def _remove_separating_lines(rows):
+def _remove_separating_lines(rows: Any) -> Tuple[List[str], Union[List[int], None]]:
     if type(rows) == list:
         separating_lines = []
         sans_rows = []
@@ -1283,13 +1485,18 @@ def _remove_separating_lines(rows):
         return rows, None
 
 
-def _reinsert_separating_lines(rows, separating_lines):
+def _reinsert_separating_lines(
+    rows: Any,
+    separating_lines: Optional[List[int]],
+) -> None:
     if separating_lines:
         for index in separating_lines:
             rows.insert(index, SEPARATING_LINE)
 
 
-def _prepend_row_index(rows, index):
+def _prepend_row_index(
+    rows: Any, index: Union[IndexType, Any]
+) -> List[List[Union[int, float, str]]]:
     """Add a left-most index column."""
     if index is None or index is False:
         return rows
@@ -1298,6 +1505,8 @@ def _prepend_row_index(rows, index):
             "index must be as long as the number of data rows: "
             + "len(index)={} len(rows)={}".format(len(index), len(rows))
         )
+    if not isinstance(index, Iterable):
+        raise ValueError("Index must be iterable")
     sans_rows, separating_lines = _remove_separating_lines(rows)
     new_rows = []
     index_iter = iter(index)
@@ -1309,7 +1518,7 @@ def _prepend_row_index(rows, index):
     return rows
 
 
-def _bool(val):
+def _bool(val: Any) -> bool:
     "A wrapper around standard bool() which doesn't throw on NumPy arrays"
     try:
         return bool(val)
@@ -1317,7 +1526,9 @@ def _bool(val):
         return False
 
 
-def _normalize_tabular_data(tabular_data, headers, showindex="default"):
+def _normalize_tabular_data(
+    tabular_data: Any, headers: Any, showindex: Union[str, int, bool] = "default"
+) -> Any:
     """Transform a supported data type to a list of lists, and a list of headers.
 
     Supported tabular data types:
@@ -1357,15 +1568,24 @@ def _normalize_tabular_data(tabular_data, headers, showindex="default"):
         is_headers2bool_broken = True  # noqa
         headers = list(headers)
 
+    error_message = (
+        "\n\nBuilding a table using python-tabulate requires two-dimensional data "
+        "like a list of lists or similar."
+        "\nDid you forget a pair of extra [] or ',' in ()?"
+    )
+
     index = None
     if hasattr(tabular_data, "keys") and hasattr(tabular_data, "values"):
         # dict-like and pandas.DataFrame?
         if hasattr(tabular_data.values, "__call__"):
             # likely a conventional dict
             keys = tabular_data.keys()
-            rows = list(
-                izip_longest(*tabular_data.values())
-            )  # columns have to be transposed
+            try:
+                rows = list(
+                    izip_longest(*tabular_data.values())
+                )  # columns have to be transposed
+            except TypeError:  # not iterable
+                raise TypeError(error_message)
         elif hasattr(tabular_data, "index"):
             # values is a property, has .index => it's likely a pandas.DataFrame (pandas 0.11.0)
             keys = list(tabular_data)
@@ -1388,7 +1608,10 @@ def _normalize_tabular_data(tabular_data, headers, showindex="default"):
             headers = list(map(str, keys))  # headers should be strings
 
     else:  # it's a usual iterable of iterables, or a NumPy array, or an iterable of dataclasses
-        rows = list(tabular_data)
+        try:
+            rows = list(tabular_data)
+        except TypeError:  # not iterable
+            raise TypeError(error_message)
 
         if headers == "keys" and not rows:
             # an empty table (issue #81)
@@ -1407,14 +1630,25 @@ def _normalize_tabular_data(tabular_data, headers, showindex="default"):
             and hasattr(rows[0], "_fields")
         ):
             # namedtuple
-            headers = list(map(str, rows[0]._fields))
+            if all(isinstance(row, tuple) and hasattr(row, "_fields") for row in rows):
+                headers = list(map(str, rows[0]._fields))  # type: ignore
+            else:
+                raise ValueError(
+                    "All objects in the rows list must be named tuples with the `_fields`` attribute"
+                )
         elif len(rows) > 0 and hasattr(rows[0], "keys") and hasattr(rows[0], "values"):
             # dict-like object
             uniq_keys = set()  # implements hashed lookup
             keys = []  # storage for set
             if headers == "firstrow":
                 firstdict = rows[0] if len(rows) > 0 else {}
-                keys.extend(firstdict.keys())
+                if type(tabular_data) != dict and not hasattr(tabular_data, "keys"):
+                    raise TypeError(
+                        "Expected a dictionary-like object, got a {}".format(
+                            type(tabular_data)
+                        )
+                    )
+                keys.extend(firstdict.keys())  # type: ignore
                 uniq_keys.update(keys)
                 rows = rows[1:]
             for row in rows:
@@ -1431,7 +1665,7 @@ def _normalize_tabular_data(tabular_data, headers, showindex="default"):
                 headers = list(map(str, headers))
             elif headers == "firstrow":
                 if len(rows) > 0:
-                    headers = [firstdict.get(k, k) for k in keys]
+                    headers = [firstdict.get(k, k) for k in keys]  # type: ignore
                     headers = list(map(str, headers))
                 else:
                     headers = []
@@ -1507,7 +1741,13 @@ def _normalize_tabular_data(tabular_data, headers, showindex="default"):
     return rows, headers
 
 
-def _wrap_text_to_colwidths(list_of_lists, colwidths, numparses=True):
+def _wrap_text_to_colwidths(
+    list_of_lists: Any,
+    colwidths: Any,
+    numparses: List[bool] = [True],
+    break_long_words: bool = _BREAK_LONG_WORDS,
+    break_on_hyphens: bool = _BREAK_ON_HYPHENS,
+):
     if len(list_of_lists):
         num_cols = len(list_of_lists[0])
     else:
@@ -1524,13 +1764,15 @@ def _wrap_text_to_colwidths(list_of_lists, colwidths, numparses=True):
                 continue
 
             if width is not None:
-                wrapper = _CustomTextWrap(width=width)
+                wrapper = _CustomTextWrap(
+                    width=width,
+                    break_long_words=break_long_words,
+                    break_on_hyphens=break_on_hyphens,
+                )
                 # Cast based on our internal type handling
                 # Any future custom formatting of types (such as datetimes)
                 # may need to be more explicit than just `str` of the object
-                casted_cell = (
-                    str(cell) if _isnumber(cell) else _type(cell, numparse)(cell)
-                )
+                casted_cell = str(cell) if _isnumber(cell) else str(cell)
                 wrapped = [
                     "\n".join(wrapper.wrap(line))
                     for line in casted_cell.splitlines()
@@ -1544,7 +1786,11 @@ def _wrap_text_to_colwidths(list_of_lists, colwidths, numparses=True):
     return result
 
 
-def _to_str(s, encoding="utf8", errors="ignore"):
+def _to_str(
+    s: Union[bytes, Any],
+    encoding: str = "utf8",
+    errors: str = "ignore",
+) -> str:
     """
     A type safe wrapper for converting a bytestring to str. This is essentially just
     a wrapper around .decode() intended for use with things like map(), but with some
@@ -1570,21 +1816,23 @@ def _to_str(s, encoding="utf8", errors="ignore"):
 
 
 def tabulate(
-    tabular_data,
-    headers=(),
-    tablefmt="simple",
-    floatfmt=_DEFAULT_FLOATFMT,
-    intfmt=_DEFAULT_INTFMT,
-    numalign=_DEFAULT_ALIGN,
-    stralign=_DEFAULT_ALIGN,
-    missingval=_DEFAULT_MISSINGVAL,
-    showindex="default",
-    disable_numparse=False,
-    colalign=None,
-    maxcolwidths=None,
-    rowalign=None,
-    maxheadercolwidths=None,
-):
+    tabular_data: Any,
+    headers: Any = (),
+    tablefmt: Any = "simple",
+    floatfmt: str = _DEFAULT_FLOATFMT,
+    intfmt: str = _DEFAULT_INTFMT,
+    numalign: str = _DEFAULT_ALIGN,
+    stralign: str = _DEFAULT_ALIGN,
+    missingval: str = _DEFAULT_MISSINGVAL,
+    showindex: Literal["default", True, False] = "default",
+    disable_numparse: bool = False,
+    colalign: Any = None,
+    maxcolwidths: Any = None,
+    rowalign: Any = None,
+    maxheadercolwidths: Any = None,
+    break_long_words: bool = _BREAK_LONG_WORDS,
+    break_on_hyphens: bool = _BREAK_ON_HYPHENS,
+) -> Any:
     """Format a fixed width table for pretty printing.
 
     >>> print(tabulate([[1, 2.34], [-56, "8.999"], ["2", "10001"]]))
@@ -2082,7 +2330,11 @@ def tabulate(
 
         numparses = _expand_numparse(disable_numparse, num_cols)
         list_of_lists = _wrap_text_to_colwidths(
-            list_of_lists, maxcolwidths, numparses=numparses
+            list_of_lists,
+            maxcolwidths,
+            numparses=numparses,
+            break_long_words=break_long_words,
+            break_on_hyphens=break_on_hyphens,
         )
 
     if maxheadercolwidths is not None:
@@ -2096,7 +2348,11 @@ def tabulate(
 
         numparses = _expand_numparse(disable_numparse, num_cols)
         headers = _wrap_text_to_colwidths(
-            [headers], maxheadercolwidths, numparses=numparses
+            [headers],
+            maxheadercolwidths,
+            numparses=numparses,
+            break_long_words=break_long_words,
+            break_on_hyphens=break_on_hyphens,
         )[0]
 
     # empty values in the first column of RST tables should be escaped (issue #82)
@@ -2184,8 +2440,15 @@ def tabulate(
     aligns = [numalign if ct in [int, float] else stralign for ct in coltypes]
     if colalign is not None:
         assert isinstance(colalign, Iterable)
+        if not isinstance(colalign, (list, tuple)):
+            raise ValueError("Expected list or tuple, got {}".format(type(colalign)))
         for idx, align in enumerate(colalign):
-            aligns[idx] = align
+            try:
+                aligns[idx] = align
+            except IndexError:
+                # This means the user has passed more values than needed in ``colalign``
+                # Drop the extra alignment
+                pass
     minwidths = (
         [width_fn(h) + min_padding for h in headers] if headers else [0] * len(cols)
     )
@@ -2223,7 +2486,9 @@ def tabulate(
     )
 
 
-def _expand_numparse(disable_numparse, column_count):
+def _expand_numparse(
+    disable_numparse: Union[bool, Iterable[int]], column_count: int
+) -> List[bool]:
     """
     Return a list of bools of length `column_count` which indicates whether
     number parsing should be used on each column.
@@ -2240,7 +2505,7 @@ def _expand_numparse(disable_numparse, column_count):
         return [not disable_numparse] * column_count
 
 
-def _expand_iterable(original, num_desired, default):
+def _expand_iterable(original: Union[Iterable, object], num_desired: int, default):
     """
     Expands the `original` argument to return a return a list of
     length `num_desired`. If `original` is shorter than `num_desired`, it will
@@ -2248,13 +2513,16 @@ def _expand_iterable(original, num_desired, default):
     If `original` is not a list to begin with (i.e. scalar value) a list of
     length `num_desired` completely populated with `default will be returned
     """
-    if isinstance(original, Iterable) and not isinstance(original, str):
+    if isinstance(original, str):
+        return [default] * num_desired
+    if isinstance(original, Iterable) and hasattr(original, "__len__"):
+        original = list(original)
         return original + [default] * (num_desired - len(original))
     else:
         return [default] * num_desired
 
 
-def _pad_row(cells, padding):
+def _pad_row(cells: Any, padding: int) -> List[str]:
     if cells:
         pad = " " * padding
         padded_cells = [pad + cell + pad for cell in cells]
@@ -2263,13 +2531,21 @@ def _pad_row(cells, padding):
         return cells
 
 
-def _build_simple_row(padded_cells, rowfmt):
+def _build_simple_row(
+    padded_cells: List[str],
+    rowfmt: Tuple[str, str, str],
+) -> str:
     "Format row according to DataRow format without padding."
     begin, sep, end = rowfmt
     return (begin + sep.join(padded_cells) + end).rstrip()
 
 
-def _build_row(padded_cells, colwidths, colaligns, rowfmt):
+def _build_row(
+    padded_cells: List[str],
+    colwidths: List[int],
+    colaligns: List[str],
+    rowfmt: Any,
+) -> Union[str, None]:
     "Return a string which represents a row of data cells."
     if not rowfmt:
         return None
@@ -2279,13 +2555,25 @@ def _build_row(padded_cells, colwidths, colaligns, rowfmt):
         return _build_simple_row(padded_cells, rowfmt)
 
 
-def _append_basic_row(lines, padded_cells, colwidths, colaligns, rowfmt, rowalign=None):
+def _append_basic_row(
+    lines: List,
+    padded_cells: List[str],
+    colwidths: Any,
+    colaligns: Any,
+    rowfmt: str,
+    rowalign: Optional[str] = None,
+) -> List[str]:
     # NOTE: rowalign is ignored and exists for api compatibility with _append_multiline_row
     lines.append(_build_row(padded_cells, colwidths, colaligns, rowfmt))
     return lines
 
 
-def _align_cell_veritically(text_lines, num_lines, column_width, row_alignment):
+def _align_cell_veritically(
+    text_lines: Any,
+    num_lines: int,
+    column_width: int,
+    row_alignment: Union[Literal["bottom", "center", "top"], None],
+) -> List[str]:
     delta_lines = num_lines - len(text_lines)
     blank = [" " * column_width]
     if row_alignment == "bottom":
@@ -2299,7 +2587,13 @@ def _align_cell_veritically(text_lines, num_lines, column_width, row_alignment):
 
 
 def _append_multiline_row(
-    lines, padded_multiline_cells, padded_widths, colaligns, rowfmt, pad, rowalign=None
+    lines: Any,
+    padded_multiline_cells: List[str],
+    padded_widths: List[int],
+    colaligns: List[Literal["left", "center", "right"]],
+    rowfmt: str,
+    pad: int,
+    rowalign: Any = None,
 ):
     colwidths = [w - 2 * pad for w in padded_widths]
     cells_lines = [c.splitlines() for c in padded_multiline_cells]
@@ -2320,7 +2614,11 @@ def _append_multiline_row(
     return lines
 
 
-def _build_line(colwidths, colaligns, linefmt):
+def _build_line(
+    colwidths: Any,
+    colaligns: Any,
+    linefmt: Any,
+) -> Optional[str]:
     "Return a string which represents a horizontal line."
     if not linefmt:
         return None
@@ -2332,7 +2630,9 @@ def _build_line(colwidths, colaligns, linefmt):
         return _build_simple_row(cells, (begin, sep, end))
 
 
-def _append_line(lines, colwidths, colaligns, linefmt):
+def _append_line(
+    lines: Any, colwidths: List[int], colaligns: List[str], linefmt: Any
+) -> str:
     lines.append(_build_line(colwidths, colaligns, linefmt))
     return lines
 
@@ -2341,23 +2641,41 @@ class JupyterHTMLStr(str):
     """Wrap the string with a _repr_html_ method so that Jupyter
     displays the HTML table"""
 
-    def _repr_html_(self):
+    def _repr_html_(self) -> str:
         return self
 
     @property
-    def str(self):
+    def str(self) -> str:
         """add a .str property so that the raw string is still accessible"""
         return self
 
 
-def _format_table(fmt, headers, rows, colwidths, colaligns, is_multiline, rowaligns):
+class JupyterHTML(Protocol):
+    def _repr_html(self) -> str:
+        ...
+
+
+def display_in_jupyter(item: Type[JupyterHTML]) -> None:
+    """Wrapper function for Jupyter display."""
+    ...  # TODO: add something that'd return the html.
+
+
+def _format_table(
+    fmt,
+    headers: Any,
+    rows: Any,
+    colwidths: Any,
+    colaligns: Any,
+    is_multiline: bool,
+    rowaligns: Any,
+):
     """Produce a plain-text representation of the table."""
-    lines = []
+    lines: List[str] = []
     hidden = fmt.with_header_hide if (headers and fmt.with_header_hide) else []
     pad = fmt.padding
     headerrow = fmt.headerrow
 
-    padded_widths = [(w + 2 * pad) for w in colwidths]
+    padded_widths: List[int] = [(w + 2 * pad) for w in colwidths]
     if is_multiline:
         pad_row = lambda row, _: row  # noqa do it later, in _append_multiline_row
         append_row = partial(_append_multiline_row, pad=pad)
@@ -2365,8 +2683,8 @@ def _format_table(fmt, headers, rows, colwidths, colaligns, is_multiline, rowali
         pad_row = _pad_row
         append_row = _append_basic_row
 
-    padded_headers = pad_row(headers, pad)
-    padded_rows = [pad_row(row, pad) for row in rows]
+    padded_headers: List[str] = pad_row(headers, pad)
+    padded_rows: List[List[str]] = [pad_row(row, pad) for row in rows]
 
     if fmt.lineabove and "lineabove" not in hidden:
         _append_line(lines, padded_widths, colaligns, fmt.lineabove)
@@ -2429,13 +2747,13 @@ class _CustomTextWrap(textwrap.TextWrapper):
     and line appending logic.
     """
 
-    def __init__(self, *args, **kwargs):
-        self._active_codes = []
-        self.max_lines = None  # For python2 compatibility
+    def __init__(self, *args: Any, **kwargs: Any):
+        self._active_codes: List[str] = []
+        self.max_lines: Optional[int] = None  # For python2 compatibility
         textwrap.TextWrapper.__init__(self, *args, **kwargs)
 
     @staticmethod
-    def _len(item):
+    def _len(item: str) -> Union[int, Literal[0]]:
         """Custom len that gets console column width for wide
         and non-wide characters as well as ignores color codes"""
         stripped = _strip_ansi(item)
@@ -2444,7 +2762,7 @@ class _CustomTextWrap(textwrap.TextWrapper):
         else:
             return len(stripped)
 
-    def _update_lines(self, lines, new_line):
+    def _update_lines(self, lines: List[str], new_line: str) -> None:
         """Adds a new line to the list of lines the text is being wrapped into
         This function will also track any ANSI color codes in this string as well
         as add any colors from previous lines order to preserve the same formatting
@@ -2471,10 +2789,14 @@ class _CustomTextWrap(textwrap.TextWrapper):
 
         lines.append(new_line)
 
-    def _handle_long_word(self, reversed_chunks, cur_line, cur_len, width):
-        """_handle_long_word(chunks : [string],
-                             cur_line : [string],
-                             cur_len : int, width : int)
+    def _handle_long_word(
+        self, reversed_chunks: List[str], cur_line: List[str], cur_len: int, width: int
+    ) -> None:
+        """_handle_long_word(
+            chunks : [string],
+            cur_line : [string],
+            cur_len : int, width : int
+        )
         Handle a chunk of text (most likely a word, not whitespace) that
         is too long to fit in any line.
         """
@@ -2509,7 +2831,7 @@ class _CustomTextWrap(textwrap.TextWrapper):
         # cur_len will be zero, so the next line will be entirely
         # devoted to the long word that we can't handle right now.
 
-    def _wrap_chunks(self, chunks):
+    def _wrap_chunks(self, chunks: List[str]) -> List[str]:
         """_wrap_chunks(chunks : [string]) -> [string]
         Wrap a sequence of text chunks and return a list of lines of
         length 'self.width' or less.  (If 'break_long_words' is false,
@@ -2537,7 +2859,6 @@ class _CustomTextWrap(textwrap.TextWrapper):
         chunks.reverse()
 
         while chunks:
-
             # Start the list of chunks that will make up the current line.
             # cur_len is just the length of all the chunks in cur_line.
             cur_line = []
@@ -2621,7 +2942,7 @@ class _CustomTextWrap(textwrap.TextWrapper):
         return lines
 
 
-def _main():
+def _main() -> None:
     """\
     Usage: tabulate [options] [FILE ...]
 
@@ -2649,7 +2970,7 @@ def _main():
     import sys
     import textwrap
 
-    usage = textwrap.dedent(_main.__doc__)
+    usage: str = textwrap.dedent(_main.__doc__) if _main.__doc__ else ""
     try:
         opts, args = getopt.getopt(
             sys.argv[1:],
@@ -2690,7 +3011,7 @@ def _main():
             print(usage)
             sys.exit(0)
     files = [sys.stdin] if not args else args
-    with (sys.stdout if outfile == "-" else open(outfile, "w")) as out:
+    with sys.stdout if outfile == "-" else open(outfile, "w") as out:
         for f in files:
             if f == "-":
                 f = sys.stdin
@@ -2706,17 +3027,24 @@ def _main():
                     colalign=colalign,
                 )
             else:
-                with open(f) as fobj:
-                    _pprint_file(
-                        fobj,
-                        headers=headers,
-                        tablefmt=tablefmt,
-                        sep=sep,
-                        floatfmt=floatfmt,
-                        intfmt=intfmt,
-                        file=out,
-                        colalign=colalign,
-                    )
+                if isinstance(f, io.TextIOBase):
+                    fobj = io.StringIO(f.read())
+
+                elif isinstance(f, (str, bytes)):
+                    with open(f) as fobj:
+                        _pprint_file(
+                            fobj,
+                            headers=headers,
+                            tablefmt=tablefmt,
+                            sep=sep,
+                            floatfmt=floatfmt,
+                            intfmt=intfmt,
+                            file=out,
+                            colalign=colalign,
+                        )
+
+                else:
+                    raise TypeError(f"Unsupported file type: {type(f)}")
 
 
 def _pprint_file(fobject, headers, tablefmt, sep, floatfmt, intfmt, file, colalign):

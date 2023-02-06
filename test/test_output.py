@@ -2879,6 +2879,27 @@ def test_list_of_lists_with_index_with_sep_line():
     )
     result = tabulate(dd, headers=["a", "b"], showindex=True)
     assert_equal(expected, result)
+    
+    
+def test_with_padded_columns_with_sep_line():
+    table = [
+        ["1", "one"],  # "1" as a str on purpose
+        [1_000, "one K"],
+        SEPARATING_LINE,
+        [1_000_000, "one M"],
+    ]
+    expected = "\n".join(
+        [
+            "+---------+-------+",
+            "|       1 | one   |",
+            "|    1000 | one K |",
+            "|---------+-------|",
+            "| 1000000 | one M |",
+            "+---------+-------+",
+        ]
+    )
+    result = tabulate(table, tablefmt="psql")
+    assert_equal(expected, result)
 
 
 def test_list_of_lists_with_supplied_index():
@@ -2972,4 +2993,56 @@ def test_preserve_whitespace():
     test_table = [["  foo", " bar   ", "foo"]]
     expected = "\n".join(["h1    h2    h3", "----  ----  ----", "foo   bar   foo"])
     result = tabulate(test_table, table_headers)
+    assert_equal(expected, result)
+    
+def test_colalign_with_no_data():
+    """
+    Output: a table with empty data, but with colalign specified.
+    """
+    test_table = []
+    table_headers = ["h1", "h2"]
+    colalign = ["left", "right"]
+    expected = "\n".join(["h1 h2", "---- ----"])
+    result = tabulate(test_table, headers=table_headers, colalign=colalign)
+    assert_equal(expected, result)
+    
+def test_colalign_with_mixed_data():
+    """
+    Output: a table with mixed data and a specified colalign.
+    """
+    table_headers = ["h1", "h2"]
+    test_table = [["", "abcdef"], [1, "abc"]]
+    expected = "\n".join(
+        ["h1        h2", "----  ------", "      abcdef", "1        abc"]
+    )
+    result = tabulate(test_table, headers=table_headers, colalign=("left", "right"))
+    assert_equal(expected, result)
+
+def test_break_long_words():
+    "Output: Default table output, with breakwords true."
+    table_headers = ["h1", "h2", "h3"]
+    test_table = [["  foo1", " bar2   ", "foo3"]]
+
+    # Table is not wrapped on 3 letters due to long word
+    expected = "h1    h2    h3\n----  ----  ----\nfoo1  bar2  foo3"
+    result = tabulate(test_table, table_headers, maxcolwidths=3, break_long_words=False)
+    assert_equal(expected, result)
+
+    # Table max width is 3 letters
+    expected = "h1    h2    h3\n----  ----  ----\nf     ba    foo\noo1   r2    3"
+    result = tabulate(test_table, table_headers, maxcolwidths=3, break_long_words=True)
+    assert_equal(expected, result)
+
+def test_break_on_hyphens():
+    "Output: Default table output, with break on hyphens true."
+    table_headers = ["h1", "h2", "h3"]
+    test_table = [["  foo-bar", " bar-bar   ", "foo-foo"]]
+    # Table max width is 5, long lines breaks on hyphens
+    expected = "h1    h2    h3\n----  ----  -----\nfoo   bar-  foo-f\n-bar  bar   oo"
+    result = tabulate(test_table, table_headers, maxcolwidths=5, break_on_hyphens=False)
+    assert_equal(expected, result)
+
+    # Table data is no longer breaks on hyphens
+    expected = "h1    h2    h3\n----  ----  ----\nfoo-  bar-  foo-\nbar   bar   foo"
+    result = tabulate(test_table, table_headers, maxcolwidths=5, break_on_hyphens=True)
     assert_equal(expected, result)
