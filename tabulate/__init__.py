@@ -1563,7 +1563,7 @@ def _normalize_tabular_data(
     except ValueError:  # numpy.ndarray, pandas.core.index.Index, ...
         is_headers2bool_broken = True  # noqa
         headers = list(headers)
-        
+
     error_message = (
         "\n\nBuilding a table using python-tabulate requires two-dimensional data "
         "like a list of lists or similar."
@@ -1580,7 +1580,7 @@ def _normalize_tabular_data(
                 rows = list(
                     izip_longest(*tabular_data.values())
                 )  # columns have to be transposed
-            except TypeError: # not iterable
+            except TypeError:  # not iterable
                 raise TypeError(error_message)
         elif hasattr(tabular_data, "index"):
             # values is a property, has .index => it's likely a pandas.DataFrame (pandas 0.11.0)
@@ -1606,7 +1606,7 @@ def _normalize_tabular_data(
     else:  # it's a usual iterable of iterables, or a NumPy array, or an iterable of dataclasses
         try:
             rows = list(tabular_data)
-        except TypeError: # not iterable
+        except TypeError:  # not iterable
             raise TypeError(error_message)
 
         if headers == "keys" and not rows:
@@ -1738,8 +1738,8 @@ def _normalize_tabular_data(
 
 
 def _wrap_text_to_colwidths(
-    list_of_lists: Any, 
-    colwidths: Any, 
+    list_of_lists: Any,
+    colwidths: Any,
     numparses: List[bool] = [True],
     break_long_words: bool = _BREAK_LONG_WORDS,
     break_on_hyphens: bool = _BREAK_ON_HYPHENS,
@@ -2326,8 +2326,8 @@ def tabulate(
 
         numparses = _expand_numparse(disable_numparse, num_cols)
         list_of_lists = _wrap_text_to_colwidths(
-            list_of_lists, 
-            maxcolwidths, 
+            list_of_lists,
+            maxcolwidths,
             numparses=numparses,
             break_long_words=break_long_words,
             break_on_hyphens=break_on_hyphens,
@@ -2344,8 +2344,8 @@ def tabulate(
 
         numparses = _expand_numparse(disable_numparse, num_cols)
         headers = _wrap_text_to_colwidths(
-            [headers], 
-            maxheadercolwidths, 
+            [headers],
+            maxheadercolwidths,
             numparses=numparses,
             break_long_words=break_long_words,
             break_on_hyphens=break_on_hyphens,
