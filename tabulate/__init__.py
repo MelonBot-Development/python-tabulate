@@ -2419,8 +2419,15 @@ def tabulate(
     aligns = [numalign if ct in [int, float] else stralign for ct in coltypes]
     if colalign is not None:
         assert isinstance(colalign, Iterable)
+        if not isinstance(colalign, (list, tuple)):
+            raise ValueError("Expected list or tuple, got {}".format(type(colalign)))
         for idx, align in enumerate(colalign):
-            aligns[idx] = align
+            try:
+                aligns[idx] = align
+            except IndexError:
+                # This means the user has passed more values than needed in ``colalign``
+                # Drop the extra alignment
+                pass
     minwidths = (
         [width_fn(h) + min_padding for h in headers] if headers else [0] * len(cols)
     )
