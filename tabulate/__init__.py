@@ -184,11 +184,15 @@ class HasLen(Protocol):
         ...
 
 
+def _is_separating_line_values(value: str) -> bool:
+    return type(value) == str and value.strip() == SEPARATING_LINE
+
+
 def _is_separating_line(row: Union[list, str]) -> Literal[True, False]:
     row_type = type(row)
     is_sl = (row_type == list or row_type == str) and (
-        (len(row) >= 1 and row[0] == SEPARATING_LINE)
-        or (len(row) >= 2 and row[1] == SEPARATING_LINE)
+        (len(row) >= 1 and _is_separating_line_values(row[0]))
+        or (len(row) >= 2 and _is_separating_line_values(row[1]))
     )
     return is_sl
 
