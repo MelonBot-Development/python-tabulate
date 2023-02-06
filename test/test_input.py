@@ -528,3 +528,35 @@ def test_list_bytes():
     )
     result = tabulate(lb, headers=["bytes"])
     assert_equal(expected, result)
+    
+def test_colalign_with_bad_type():
+    """
+    Input: colalign which is not a list or tuple.
+    """
+    table = []
+    with raises(ValueError, match="colalign should be a list or tuple."):
+        tabulate(table, colalign="right")
+        
+def test_more_colalign_than_headers():
+    """
+    Input: a list of headers and colalign with more colalign than headers.
+    """
+    table = [
+        ("sequare", 4),
+        ("triangle", 3),
+        ("circle", 1)
+    ]
+    headers = ["name", "sides"]
+    colalign = ["left", "right", "right"]
+    
+    tabulate(table, headers=headers, colalign=colalign)
+    
+def test_colalign_with_empty_input():
+    """
+    Input: a list of headers and colalign with more colalign than headers.
+    """
+    table = []
+    headers = ["h1", "h2"]
+    colalign = ["left", "right"]
+    
+    tabulate(table, headers=headers, colalign=colalign)
